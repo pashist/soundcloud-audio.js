@@ -1,13 +1,16 @@
 'use strict';
 
+require('isomorphic-fetch');
+require('es6-promise');
+
 var anchor;
 var keys = 'protocol hostname host pathname port search hash href'.split(' ');
-function _parseURL (url) {
+function _parseURL(url) {
     if (!anchor) {
         anchor = document.createElement('a');
     }
     anchor.href = url || '';
-    var result = {}
+    var result = {};
     for (var i = 0, len = keys.length; i < len; i++) {
         var key = keys[i];
         result[key] = anchor[key];
@@ -15,15 +18,34 @@ function _parseURL (url) {
     return result;
 }
 
-function _appendQueryParam (url, param, value) {
+function _appendQueryParam(url, param, value) {
+    var params = {};
+    params[param] = value;
+    return _appendQueryParams(url, params);
+}
+
+function _appendQueryParams(url, params) {
     var U = _parseURL(url);
     var regex = /\?(?:.*)$/;
     var chr = regex.test(U.search) ? '&' : '?';
-    var result = U.protocol + '//' +  U.host + U.port + U.pathname + U.search + chr + param + '=' + value + U.hash;
+    var result = U.protocol + '//' + U.host + U.port + U.pathname + U.search + chr + _buildQueryURL(params) + U.hash;
     return result;
 }
 
-function SoundCloud (clientId) {
+function _buildQueryURL(obj, prefix) {
+    var str = [];
+    for (var p in obj) {
+        if (obj.hasOwnProperty(p)) {
+            var k = prefix ? prefix + "[" + p + "]" : p, v = obj[p];
+            str.push(typeof v == "object" ?
+                _buildQueryURL(v, k) :
+            encodeURIComponent(k) + "=" + encodeURIComponent(v));
+        }
+    }
+    return str.join("&");
+}
+
+function SoundCloud(clientId) {
     if (!(this instanceof SoundCloud)) {
         return new SoundCloud(clientId);
     }
@@ -67,12 +89,32 @@ SoundCloud.prototype.resolve = function (url, callback) {
         }
 
         this.duration = data.duration && !isNaN(data.duration) ?
-            data.duration / 1000 : // convert to seconds
+        data.duration / 1000 : // convert to seconds
             0; // no duration is zero
 
         callback(data);
     }.bind(this));
 };
+
+SoundCloud.prototype.search = function (params, callback) {
+
+    var url = _appendQueryParams(this._baseUrl + '/tracks?client_id=' + this._clientId, params);
+
+    return fetch(url)
+        .then(function (response) {
+            return response.json()
+        })
+        .then(function (data) {
+            this.cleanData();
+            if (Array.isArray(data)) {
+                this._playlist = {tracks: data};
+            }
+            this.duration = 0;
+            typeof callback === 'function' && callback(data);
+            return data;
+        }.bind(this));
+};
+
 
 SoundCloud.prototype._jsonp = function (url, callback) {
     var target = document.getElementsByTagName('script')[0] || document.head;
@@ -83,7 +125,8 @@ SoundCloud.prototype._jsonp = function (url, callback) {
         if (script.parentNode) {
             script.parentNode.removeChild(script);
         }
-        window[id] = function () {};
+        window[id] = function () {
+        };
         callback(data);
     };
 
